@@ -6,7 +6,7 @@ Written in Go with a SQLite database.
 
 ## Install
 ```
-go install github.com/micahco/musli/cmd/musli
+go install github.com/micahco/musli/cmd/musli@latest
 ```
 
 ## Options

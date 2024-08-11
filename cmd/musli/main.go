@@ -107,6 +107,20 @@ func getAppPath(filename string) (string, error) {
 	return filepath.Join(home, ".musli", filename), err
 }
 
+func loadConfig() (*config, error) {
+	path, err := getAppPath("config.toml")
+	if err != nil {
+		return nil, err
+	}
+
+	conf, err := readConfig(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return conf, nil
+}
+
 func readConfig(path string) (*config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -126,21 +140,11 @@ func readConfig(path string) (*config, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Allows the use of $HOME and other env vars in the config.toml
+	conf.MusicDir = os.ExpandEnv(conf.MusicDir)
+
 	return &conf, nil
-}
-
-func loadConfig() (*config, error) {
-	path, err := getAppPath("config.toml")
-	if err != nil {
-		return nil, err
-	}
-
-	conf, err := readConfig(path)
-	if err != nil {
-		return nil, err
-	}
-
-	return conf, nil
 }
 
 func loadDB() (*sql.DB, error) {
