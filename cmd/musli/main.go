@@ -12,13 +12,13 @@ import (
 	"github.com/BurntSushi/toml"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/gosuri/uilive"
 	"github.com/micahco/musli"
 	"golang.org/x/term"
 )
 
 const (
 	APP_NAME     = "musli"
-	ESCAPE       = "\033"
 	CURSOR_COLOR = "5"
 	CELL_WIDTH   = 15
 )
@@ -102,13 +102,15 @@ func printUsage() {
 -t, --tidy: scrub library for entries that no longer exist`)
 }
 
-func getAppPath(filename string) (string, error) {
-	home, err := os.UserHomeDir()
-	return filepath.Join(home, ".musli", filename), err
-}
-
 func loadConfig() (*config, error) {
-	path, err := getAppPath("config.toml")
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return nil, err
+	}
+
+	path := filepath.Join(dir, APP_NAME, "config.toml")
+
+	err = os.MkdirAll(filepath.Dir(path), os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
@@ -148,10 +150,12 @@ func readConfig(path string) (*config, error) {
 }
 
 func loadDB() (*sql.DB, error) {
-	path, err := getAppPath("library.db")
+	dir, err := os.UserCacheDir()
 	if err != nil {
 		return nil, err
 	}
+
+	path := filepath.Join(dir, APP_NAME, "library.db")
 
 	err = os.MkdirAll(filepath.Dir(path), os.ModePerm)
 	if err != nil {
@@ -166,13 +170,12 @@ func loadDB() (*sql.DB, error) {
 	return db, nil
 }
 
-func clearLine(a ...any) {
-	fmt.Printf("%s[1A%s[K", ESCAPE, ESCAPE)
-	fmt.Println(a...)
-}
-
 func execScan(conf *config, db *sql.DB) error {
 	fmt.Println("Scanning:", conf.MusicDir)
+
+	w := uilive.New()
+	w.Start()
+
 	paths, err := musli.GetMusicDirPaths(conf.MusicDir)
 	if err != nil {
 		return err
@@ -180,19 +183,25 @@ func execScan(conf *config, db *sql.DB) error {
 	total := len(paths)
 
 	for i, path := range paths {
+		fmt.Fprintf(w, "%d/%d\n", i, total)
 		err = musli.AddPathToLibrary(path, db)
-		clearLine(i, "/", total)
 		if err != nil {
 			return err
 		}
 	}
 
-	clearLine("Scanned", total, "files")
+	fmt.Fprintln(w, "Scanned", total, "files")
+
+	w.Stop()
 	return nil
 }
 
 func execTidy(db *sql.DB) error {
 	fmt.Println("Scrubbing library")
+
+	w := uilive.New()
+	w.Start()
+
 	paths, err := musli.FetchTrackPaths(db)
 	if err != nil {
 		return err
@@ -200,23 +209,24 @@ func execTidy(db *sql.DB) error {
 	total := len(paths)
 
 	for i, path := range paths {
+		fmt.Fprintf(w, "%d/%d\n", i, total)
 		_, err := os.Stat(path)
 		// Check if path actually exists
 		if errors.Is(err, os.ErrNotExist) {
 			musli.DeleteTrack(path, db)
 		}
-		clearLine(i, "/", total)
 		if err != nil {
 			return err
 		}
 	}
 
-	clearLine("Cleaning up")
 	err = musli.RemoveEmptyAlbums(db)
 	if err != nil {
 		return err
 	}
-	clearLine("Scrubbed", total, "files")
+
+	fmt.Fprintln(w, "Scrubbed", total, "files")
+	w.Stop()
 	return nil
 }
 
@@ -271,6 +281,7 @@ func initialModel(conf *config, db *sql.DB) (*model, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if len(albums) == 0 {
 		err := execScan(conf, db)
 		if err != nil {
@@ -292,6 +303,7 @@ func initialModel(conf *config, db *sql.DB) (*model, error) {
 		}
 		styleHeader.Width(tw - 2) // subtract 2 for border width
 	}
+
 	styleCursor.Foreground(lipgloss.Color(conf.CursorColor))
 	m := &model{
 		albums:     albums,
@@ -304,6 +316,7 @@ func initialModel(conf *config, db *sql.DB) (*model, error) {
 		start:      0,
 		cursor:     0,
 	}
+
 	return m, nil
 }
 

@@ -14,7 +14,7 @@ import (
 	"strings"
 
 	"github.com/dhowden/tag"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type Album struct {
@@ -27,12 +27,12 @@ type Album struct {
 type Track struct {
 	AlbumID     int64
 	Disc        int
-	Path        string
 	TrackNumber int
+	Path        string
 }
 
 func OpenDB(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, err
 	}
