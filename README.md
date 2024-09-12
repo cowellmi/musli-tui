@@ -1,13 +1,8 @@
 # musli — music library
 
-A music library interface with a focus on albums. Unlike most consumer music programs, musli doesn't include an audio player. Instead, it relies on the media player you already have installed (see: [Compatible media players](#compatible-media-players)). Likewise, the program doesn't include any methods to edit metadata, requiring that your music files already be properly tagged.
+An opinionated music library TUI focused on albums.
 
-Written in Go with a SQLite database.
-
-## Install
-```
-go install github.com/micahco/musli/cmd/musli@latest
-```
+## 
 
 ## Options
 
@@ -25,7 +20,7 @@ See [config.toml](https://github.com/micahco/musli/blob/main/config.toml) for an
 
 #### MusicDir
 
-Default: `"~/Music"`
+Default: `"$HOME/Music"`
 
 Recursively find music files in said directory.
 
@@ -41,15 +36,17 @@ The command executed will look something like this:
 
 #### CursorColor
 
-Default: `"5" // magenta`
+Default: `"202"`
 
-Refer to charm's [Lip Gloss](https://github.com/charmbracelet/lipgloss?tab=readme-ov-file#colors) for valid color codes.
+Color code that will highlight the cursor text in the TUI.
 
-#### ShowStdout / ShowStderr:
+Refer to [Lip Gloss](https://github.com/charmbracelet/lipgloss?tab=readme-ov-file#colors) for valid color codes.
 
-Default: both `false`
+#### Debug:
 
-Prints the command's stdout/stderr while the media player is running. Useful for debugging. Should only enable one at a time. If both are set to `true`, stdout takes precedence and stderr will not be printed.
+Default: `false`
+
+Outputs the `ExecCmd` stdout/stderr to a log file `musli_2006-01-02_15-04-05.txt` in the working directory.
 
 ## Compatible media players
 
@@ -64,4 +61,6 @@ Tested:
 * mplayer
 * parole
 
-Flatpak versions should work as well (i.e. `flatpak run io.mpv.Mpv`).
+Flatpak versions should work as well:
+
+

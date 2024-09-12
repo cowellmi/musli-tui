@@ -1,2 +1,7 @@
 *.db
 *.exe
+
+.devcontainer/
+
+# Debug logs
+musli_*.txt

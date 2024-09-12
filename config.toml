@@ -2,5 +2,4 @@ MusicDir = "$HOME/Music"
 ExecCmd = "echo"
 CursorColor = "202"
 PageLength = 10
-ShowStdout = false
-ShowStderr = false
+Debug = true
