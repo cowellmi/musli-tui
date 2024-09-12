@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,7 +21,7 @@ import (
 
 const (
 	APP_NAME     = "musli"
-	CURSOR_COLOR = "5"
+	CURSOR_COLOR = "202"
 	CELL_WIDTH   = 15
 )
 
@@ -28,8 +30,7 @@ type config struct {
 	ExecCmd     string
 	CursorColor string
 	PageLength  int
-	ShowStdout  bool
-	ShowStderr  bool
+	Debug       bool
 }
 
 func main() {
@@ -75,12 +76,14 @@ func root(args []string) error {
 	case "-h", "--help":
 		printUsage()
 	case "-r", "--random":
-		albums, err := musli.GetAlbumsOrderRandom(db)
+		album, err := musli.GetOneRandomAlbum(db)
 		if err != nil {
 			return err
 		}
-		randAlbum := albums[rand.IntN(100)]
-		musli.PlayAlbum(randAlbum.ID, conf.ExecCmd, conf.ShowStdout, conf.ShowStderr, db)
+		if album == nil {
+			return fmt.Errorf("empty library")
+		}
+		playAlbum(db, album.ID, conf.ExecCmd, conf.Debug)
 	case "-s", "--scan":
 		err = execScan(conf, db)
 	case "-t", "--tidy":
@@ -88,10 +91,7 @@ func root(args []string) error {
 	default:
 		return fmt.Errorf("invalid option: '%s'", arg)
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 func printUsage() {
@@ -134,8 +134,7 @@ func readConfig(path string) (*config, error) {
 		ExecCmd:     "mpv",
 		CursorColor: CURSOR_COLOR,
 		PageLength:  10,
-		ShowStdout:  false,
-		ShowStderr:  false,
+		Debug:       false,
 	}
 
 	_, err = toml.DecodeFile(path, &conf)
@@ -176,7 +175,7 @@ func execScan(conf *config, db *sql.DB) error {
 	w := uilive.New()
 	w.Start()
 
-	paths, err := musli.GetMusicDirPaths(conf.MusicDir)
+	paths, err := musli.FindAudioFilePaths(conf.MusicDir)
 	if err != nil {
 		return err
 	}
@@ -184,7 +183,7 @@ func execScan(conf *config, db *sql.DB) error {
 
 	for i, path := range paths {
 		fmt.Fprintf(w, "%d/%d\n", i, total)
-		err = musli.AddPathToLibrary(path, db)
+		err = musli.AddPath(db, path)
 		if err != nil {
 			return err
 		}
@@ -202,7 +201,7 @@ func execTidy(db *sql.DB) error {
 	w := uilive.New()
 	w.Start()
 
-	paths, err := musli.FetchTrackPaths(db)
+	paths, err := musli.AllTrackPaths(db)
 	if err != nil {
 		return err
 	}
@@ -213,7 +212,7 @@ func execTidy(db *sql.DB) error {
 		_, err := os.Stat(path)
 		// Check if path actually exists
 		if errors.Is(err, os.ErrNotExist) {
-			musli.DeleteTrack(path, db)
+			musli.DeleteTrack(db, path)
 		}
 		if err != nil {
 			return err
@@ -238,18 +237,50 @@ const (
 	sortMethodYear
 )
 
-func fetchAlbums(db *sql.DB, sortMethod int, asc bool) ([]musli.Album, error) {
+func sortedAlbums(db *sql.DB, sortMethod int, asc bool) ([]musli.Album, error) {
 	var albums []musli.Album
 	var err error
 	switch sortMethod {
 	case sortMethodRandom:
-		albums, err = musli.GetAlbumsOrderRandom(db)
+		albums, err = musli.GetRandomAlbums(db)
 	case sortMethodArtist:
-		albums, err = musli.GetAlbumsOrderAlbumArtist(asc, db)
+		albums, err = musli.GetAlbumsByArtist(db, asc)
 	case sortMethodYear:
-		albums, err = musli.FetchAlbumsByYear(asc, db)
+		albums, err = musli.GetAlbumsByYear(db, asc)
 	}
 	return albums, err
+}
+
+func playAlbum(db *sql.DB, albumID int64, execCmd string, debug bool) error {
+	paths, err := musli.AlbumTrackPaths(db, albumID)
+	if err != nil {
+		return err
+	}
+
+	c := strings.Split(execCmd, " ")
+	args := append(c[1:], paths...)
+	cmd := exec.Command(c[0], args...)
+
+	if debug {
+		ct := time.Now()
+		ft := ct.Format("2006-01-02_15-04-05")
+		name := fmt.Sprintf("%s_%s.txt", APP_NAME, ft)
+
+		file, err := os.Create(name)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		cmd.Stdout = file
+		cmd.Stderr = file
+	}
+
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type model struct {
@@ -262,22 +293,26 @@ type model struct {
 	query      string
 	start      int // page start index
 	cursor     int // page cursor index
+	log        bool
 }
 
-var styleCursor = lipgloss.NewStyle().
-	Foreground(lipgloss.Color(CURSOR_COLOR))
-var styleBold = lipgloss.NewStyle().
-	Bold(true)
-var styleAlbums = lipgloss.NewStyle().
-	MarginLeft(1).
-	TabWidth(5)
-var styleHeader = lipgloss.NewStyle().
-	Border(lipgloss.NormalBorder())
-var styleHeaderCell = lipgloss.NewStyle().
-	Width(CELL_WIDTH)
+var (
+	styleCursor = lipgloss.NewStyle().
+			Foreground(lipgloss.Color(CURSOR_COLOR))
+	styleBold = lipgloss.NewStyle().
+			Bold(true)
+	styleHeader = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder())
+	styleAlbums = lipgloss.NewStyle().
+			MarginLeft(1).
+			TabWidth(5)
+	styleLog        = lipgloss.NewStyle()
+	styleHeaderCell = lipgloss.NewStyle().
+			Width(CELL_WIDTH)
+)
 
 func initialModel(conf *config, db *sql.DB) (*model, error) {
-	albums, err := musli.GetAlbumsOrderRandom(db)
+	albums, err := musli.GetRandomAlbums(db)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +322,7 @@ func initialModel(conf *config, db *sql.DB) (*model, error) {
 		if err != nil {
 			return nil, err
 		}
-		albums, err = musli.GetAlbumsOrderRandom(db)
+		albums, err = musli.GetRandomAlbums(db)
 		if err != nil {
 			return nil, err
 		}
@@ -301,7 +336,8 @@ func initialModel(conf *config, db *sql.DB) (*model, error) {
 		if err != nil {
 			return nil, err
 		}
-		styleHeader.Width(tw - 2) // subtract 2 for border width
+		// accomodate for border width
+		styleHeader.Width(tw - 2)
 	}
 
 	styleCursor.Foreground(lipgloss.Color(conf.CursorColor))
@@ -347,7 +383,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.filter && len(m.query) > 0 {
 		m.start = 0
-		albums, err := musli.FetchAlbumsByQuery(m.query, m.db)
+		albums, err := musli.SearchAlbums(m.db, m.query)
 		if err != nil {
 			return m.quit(err)
 		}
@@ -359,109 +395,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) View() string {
 	s := m.viewHeader()
 	s += m.viewAlbums()
+	s += m.viewLog()
 	return s
-}
-
-func (m *model) quit(err error) (tea.Model, tea.Cmd) {
-	if err != nil {
-		fmt.Println("musli: ", err.Error())
-	}
-	return m, tea.Quit
-}
-
-func (m *model) controllerMain(key string) (tea.Cmd, error) {
-	switch key {
-	case "q":
-		return tea.Quit, nil
-	case "pgup":
-		m.moveStart()
-	case "pgdown":
-		m.moveEnd()
-	case "left", "h":
-		m.moveLeft()
-	case "up", "k":
-		m.moveUp()
-	case "down", "j":
-		m.moveDown()
-	case "right", "l":
-		m.moveRight()
-	case "o":
-		if len(m.query) == 0 && m.sortMethod != sortMethodRandom {
-			m.sortAsc = !m.sortAsc
-			albums, err := fetchAlbums(m.db, m.sortMethod, m.sortAsc)
-			if err != nil {
-				return nil, err
-			}
-			m.albums = albums
-		}
-	case "s":
-		if len(m.query) == 0 {
-			err := m.toggleSortMethod()
-			if err != nil {
-				return nil, err
-			}
-		}
-	case "/":
-		m.cursor = -1
-		m.filter = true
-	case "enter", " ":
-		album := m.albums[m.start+m.cursor]
-		err := musli.PlayAlbum(album.ID, m.conf.ExecCmd, m.conf.ShowStdout, m.conf.ShowStderr, m.db)
-		if err != nil {
-			return nil, err
-		}
-	case "esc":
-		if len(m.query) > 0 {
-			err := m.clearFilter()
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	return nil, nil
-}
-
-func (m *model) controllerFilter(key string) (tea.Cmd, error) {
-	switch key {
-	case "backspace":
-		if len(m.query) > 0 {
-			// remove last char from query
-			m.query = m.query[:len(m.query)-1]
-		}
-	case "enter":
-		m.filter = false
-		m.start = 0
-		m.cursor = 0
-		if len(m.query) == 0 {
-			albums, err := fetchAlbums(m.db, m.sortMethod, m.sortAsc)
-			if err != nil {
-				return nil, err
-			}
-			m.albums = albums
-		}
-	case "esc":
-		m.filter = false
-		err := m.clearFilter()
-		if err != nil {
-			return nil, err
-		}
-	default:
-		if len(key) == 1 {
-			m.query += key
-		}
-	}
-	return nil, nil
-}
-
-func (m *model) clearFilter() error {
-	m.cursor = 0
-	m.query = ""
-	albums, err := fetchAlbums(m.db, m.sortMethod, m.sortAsc)
-	if err != nil {
-		return err
-	}
-	m.albums = albums
-	return nil
 }
 
 func (m *model) viewHeader() string {
@@ -515,12 +450,122 @@ func (m *model) viewAlbums() string {
 	return styleAlbums.Render(s)
 }
 
+func (m *model) viewLog() string {
+	if !m.log {
+		return ""
+	}
+	s := "\nLOG:\n"
+	return styleLog.Render(s)
+}
+
+func (m *model) quit(err error) (tea.Model, tea.Cmd) {
+	if err != nil {
+		fmt.Println("musli: ", err.Error())
+	}
+	return m, tea.Quit
+}
+
+func (m *model) controllerMain(key string) (tea.Cmd, error) {
+	switch key {
+	case "q":
+		return tea.Quit, nil
+	case "pgup":
+		m.moveStart()
+	case "pgdown":
+		m.moveEnd()
+	case "left", "h":
+		m.moveLeft()
+	case "up", "k":
+		m.moveUp()
+	case "down", "j":
+		m.moveDown()
+	case "right", "l":
+		m.moveRight()
+	case "o":
+		if len(m.query) == 0 && m.sortMethod != sortMethodRandom {
+			m.sortAsc = !m.sortAsc
+			albums, err := sortedAlbums(m.db, m.sortMethod, m.sortAsc)
+			if err != nil {
+				return nil, err
+			}
+			m.albums = albums
+		}
+	case "s":
+		if len(m.query) == 0 {
+			err := m.toggleSortMethod()
+			if err != nil {
+				return nil, err
+			}
+		}
+	case "/":
+		m.cursor = -1
+		m.filter = true
+	case "enter", " ":
+		album := m.albums[m.start+m.cursor]
+		err := playAlbum(m.db, album.ID, m.conf.ExecCmd, m.conf.Debug)
+		if err != nil {
+			return nil, err
+		}
+	case "esc":
+		if len(m.query) > 0 {
+			err := m.clearFilter()
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (m *model) controllerFilter(key string) (tea.Cmd, error) {
+	switch key {
+	case "backspace":
+		if len(m.query) > 0 {
+			// remove last char from query
+			m.query = m.query[:len(m.query)-1]
+		}
+	case "enter":
+		m.filter = false
+		m.start = 0
+		m.cursor = 0
+		if len(m.query) == 0 {
+			albums, err := sortedAlbums(m.db, m.sortMethod, m.sortAsc)
+			if err != nil {
+				return nil, err
+			}
+			m.albums = albums
+		}
+	case "esc":
+		m.filter = false
+		err := m.clearFilter()
+		if err != nil {
+			return nil, err
+		}
+	default:
+		if len(key) == 1 {
+			m.query += key
+		}
+	}
+	return nil, nil
+}
+
+func (m *model) clearFilter() error {
+	m.cursor = 0
+	m.query = ""
+	albums, err := sortedAlbums(m.db, m.sortMethod, m.sortAsc)
+	if err != nil {
+		return err
+	}
+	m.albums = albums
+	return nil
+}
+
 func (m *model) toggleSortMethod() error {
 	m.sortMethod++
 	if m.sortMethod >= len(sortMethods) {
 		m.sortMethod = 0
 	}
-	albums, err := fetchAlbums(m.db, m.sortMethod, m.sortAsc)
+	albums, err := sortedAlbums(m.db, m.sortMethod, m.sortAsc)
 	if err != nil {
 		return err
 	}
