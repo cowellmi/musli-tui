@@ -1,4 +1,11 @@
-# musli — music library interface
+# musli — music library
+
+An extremely minimal TUI for albums.
+
+* Fast
+* Intuitive keybindings
+* Uses your favorite media player
+* Works well with network shares
 
 ## Options
 
@@ -6,7 +13,7 @@ Run `musli --help` for a list of options and how to use them.
 
 ## Configuration
 
-musli requires a valid [TOML](https://toml.io/en/v1.0.0) configuration file to run.
+`musli` requires a valid [TOML](https://toml.io/en/v1.0.0) configuration file to run.
 
 * Unix: `$XDG_CONFIG_HOME/musli/config.toml`
     * Else: `$HOME/.config/musli/config.toml`
@@ -23,7 +30,7 @@ Each config parameter has a default value. See [config.toml](https://github.com/
 
 Default: `"$HOME/Music"`
 
-Directory containing your music files. This will be recursivelly scanned. You may access local environemnt variables (such as `$HOME`). Must use Unix-style forward slashes, even on Windows systems. For example, to access a public Windows share: `//Share/public/music`.
+Directory containing your music files. This will be recursively  scanned. You may access local environment variables (such as `$HOME`). Must use Unix-style forward slashes, even on Windows systems. For example, to access a public Windows share: `//Share/public/music`.
 
 #### ExecCmd
 
@@ -45,15 +52,14 @@ If true, outputs the `ExecCmd` stdout/stderr to a log file `musli_2006-01-02_15-
 
 ## Compatible Media Players
 
-Any media player that uses the following cli pattern should work.
+Any media player that uses the following CLI pattern should work.
 
 `cmd [options] files...`
 
-Tested:
+Valid `ExecCmd` values:
 
 * `mpv`
 * `vlc`
 * `mplayer`
 * `parole`
-
-Flatpak versions should work as well e.g. `flatpak run io.mpv.Mpv`
+* `flatpak run io.mpv.Mpv`

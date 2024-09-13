@@ -141,7 +141,8 @@ func readMetadata(path string) (*Album, *Track, error) {
 	return &a, &t, nil
 }
 
-func AddPath(db *sql.DB, path string) error {
+// Add track (and album, if not present) to library
+func AddPathToLibrary(db *sql.DB, path string) error {
 	trackID, err := findTrackID(path, db)
 	if err != nil {
 		return err
@@ -174,6 +175,17 @@ func AddPath(db *sql.DB, path string) error {
 	return nil
 }
 
+func findTrackID(path string, db *sql.DB) (int64, error) {
+	query := `SELECT id FROM tracks WHERE path = ?;`
+	row := db.QueryRow(query, path)
+	var trackID int64
+	err := row.Scan(&trackID)
+	if err == sql.ErrNoRows {
+		return -1, nil
+	}
+	return trackID, err
+}
+
 func findAlbumID(a *Album, db *sql.DB) (int64, error) {
 	query := `SELECT id FROM albums
 			WHERE album_artist = ? AND name = ? AND year = ?;`
@@ -184,17 +196,6 @@ func findAlbumID(a *Album, db *sql.DB) (int64, error) {
 		return -1, nil
 	}
 	return albumID, err
-}
-
-func findTrackID(path string, db *sql.DB) (int64, error) {
-	query := `SELECT id FROM tracks WHERE path = ?;`
-	row := db.QueryRow(query, path)
-	var trackID int64
-	err := row.Scan(&trackID)
-	if err == sql.ErrNoRows {
-		return -1, nil
-	}
-	return trackID, err
 }
 
 func insertAlbum(a *Album, db *sql.DB) (int64, error) {
@@ -210,26 +211,25 @@ func insertAlbum(a *Album, db *sql.DB) (int64, error) {
 	return albumID, nil
 }
 
+func insertTrack(db *sql.DB, t *Track) (int64, error) {
+	res, err := db.Exec(`INSERT INTO tracks(album_id,disc,path,track_number)
+						VALUES(?,?,?,?);`, t.AlbumID, t.Disc, t.Path, t.TrackNumber)
+	if err != nil {
+		return -1, err
+	}
+	trackID, err := res.LastInsertId()
+	if err != nil {
+		return -1, err
+	}
+	return trackID, nil
+}
+
 func DeleteTrack(db *sql.DB, path string) error {
 	_, err := db.Exec(`DELETE FROM tracks WHERE path = ?`, path)
 	return err
 }
 
-func fetchAlbumIDs(db *sql.DB) ([]int64, error) {
-	query := `SELECT id FROM albums`
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, err
-	}
-
-	albumIDs, err := parseRowsToAlbumIDs(rows)
-	if err != nil {
-		return nil, err
-	}
-
-	return albumIDs, nil
-}
-
+// Delete all albums with no tracks
 func RemoveEmptyAlbums(db *sql.DB) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -247,19 +247,6 @@ func RemoveEmptyAlbums(db *sql.DB) error {
 	}
 
 	return tx.Commit()
-}
-
-func parseRowsToAlbums(rows *sql.Rows) ([]Album, error) {
-	var albums []Album
-	for rows.Next() {
-		var a Album
-		err := rows.Scan(&a.ID, &a.AlbumArtist, &a.Name, &a.Year)
-		if err != nil {
-			return nil, err
-		}
-		albums = append(albums, a)
-	}
-	return albums, nil
 }
 
 func GetRandomAlbums(db *sql.DB) ([]Album, error) {
@@ -371,19 +358,6 @@ func readAltYearMetadata(m tag.Metadata) int {
 	return 0
 }
 
-func insertTrack(db *sql.DB, t *Track) (int64, error) {
-	res, err := db.Exec(`INSERT INTO tracks(album_id,disc,path,track_number)
-						VALUES(?,?,?,?);`, t.AlbumID, t.Disc, t.Path, t.TrackNumber)
-	if err != nil {
-		return -1, err
-	}
-	trackID, err := res.LastInsertId()
-	if err != nil {
-		return -1, err
-	}
-	return trackID, nil
-}
-
 func AlbumTrackPaths(db *sql.DB, albumID int64) ([]string, error) {
 	query := `SELECT path FROM tracks
 			WHERE album_id = ?
@@ -416,17 +390,17 @@ func AllTrackPaths(db *sql.DB) ([]string, error) {
 	return paths, nil
 }
 
-func parseRowsToAlbumIDs(rows *sql.Rows) ([]int64, error) {
-	var albumIDs []int64
+func parseRowsToAlbums(rows *sql.Rows) ([]Album, error) {
+	var albums []Album
 	for rows.Next() {
-		var a int64
-		err := rows.Scan(&a)
+		var a Album
+		err := rows.Scan(&a.ID, &a.AlbumArtist, &a.Name, &a.Year)
 		if err != nil {
 			return nil, err
 		}
-		albumIDs = append(albumIDs, a)
+		albums = append(albums, a)
 	}
-	return albumIDs, nil
+	return albums, nil
 }
 
 func parseRowsToTrackPaths(rows *sql.Rows) ([]string, error) {

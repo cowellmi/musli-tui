@@ -7,7 +7,11 @@
 
 	"build": {
 		"dockerfile": "Dockerfile"
-	}
+	},
+
+	"mounts": [
+		"source=${localEnv:HOME}/Music,target=/home/vscode/Music,type=bind"
+	]
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},

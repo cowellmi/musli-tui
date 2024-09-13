@@ -169,6 +169,7 @@ func loadDB() (*sql.DB, error) {
 	return db, nil
 }
 
+// TODO: dry
 func execScan(conf *config, db *sql.DB) error {
 	fmt.Println("Scanning:", conf.MusicDir)
 
@@ -182,16 +183,19 @@ func execScan(conf *config, db *sql.DB) error {
 	total := len(paths)
 
 	for i, path := range paths {
+		// limit writes
+		w.Flush()
 		fmt.Fprintf(w, "%d/%d\n", i, total)
-		err = musli.AddPath(db, path)
+		err = musli.AddPathToLibrary(db, path)
 		if err != nil {
 			return err
 		}
 	}
 
+	w.Flush()
 	fmt.Fprintln(w, "Scanned", total, "files")
-
 	w.Stop()
+
 	return nil
 }
 
@@ -208,9 +212,10 @@ func execTidy(db *sql.DB) error {
 	total := len(paths)
 
 	for i, path := range paths {
+		w.Flush()
 		fmt.Fprintf(w, "%d/%d\n", i, total)
+		// check if file exists
 		_, err := os.Stat(path)
-		// Check if path actually exists
 		if errors.Is(err, os.ErrNotExist) {
 			musli.DeleteTrack(db, path)
 		}
@@ -224,8 +229,10 @@ func execTidy(db *sql.DB) error {
 		return err
 	}
 
+	w.Flush()
 	fmt.Fprintln(w, "Scrubbed", total, "files")
 	w.Stop()
+
 	return nil
 }
 
@@ -357,7 +364,7 @@ func initialModel(conf *config, db *sql.DB) (*model, error) {
 }
 
 func (m *model) Init() tea.Cmd {
-	return nil
+	return tea.ClearScreen
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -381,6 +388,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 	}
+
 	if m.filter && len(m.query) > 0 {
 		m.start = 0
 		albums, err := musli.SearchAlbums(m.db, m.query)
@@ -389,6 +397,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.albums = albums
 	}
+
 	return m, nil
 }
 
@@ -469,10 +478,8 @@ func (m *model) controllerMain(key string) (tea.Cmd, error) {
 	switch key {
 	case "q":
 		return tea.Quit, nil
-	case "pgup":
-		m.moveStart()
-	case "pgdown":
-		m.moveEnd()
+	case "c": // clear screen
+		return tea.ClearScreen, nil
 	case "left", "h":
 		m.moveLeft()
 	case "up", "k":
@@ -481,7 +488,7 @@ func (m *model) controllerMain(key string) (tea.Cmd, error) {
 		m.moveDown()
 	case "right", "l":
 		m.moveRight()
-	case "o":
+	case "o": // order
 		if len(m.query) == 0 && m.sortMethod != sortMethodRandom {
 			m.sortAsc = !m.sortAsc
 			albums, err := sortedAlbums(m.db, m.sortMethod, m.sortAsc)
@@ -490,15 +497,15 @@ func (m *model) controllerMain(key string) (tea.Cmd, error) {
 			}
 			m.albums = albums
 		}
-	case "s":
+	case "s": // sort
 		if len(m.query) == 0 {
 			err := m.toggleSortMethod()
 			if err != nil {
 				return nil, err
 			}
 		}
-	case "/":
-		m.cursor = -1
+	case "/": // filter
+		m.cursor = -1 // reset cursor
 		m.filter = true
 	case "enter", " ":
 		album := m.albums[m.start+m.cursor]
@@ -599,16 +606,4 @@ func (m *model) moveRight() {
 	if m.start+m.cursor > len(m.albums)-1 {
 		m.cursor = len(m.albums) - m.start - 1
 	}
-}
-
-func (m *model) moveStart() {
-	m.start = 0
-}
-
-func (m *model) moveEnd() {
-	i := m.start
-	for i+m.conf.PageLength < len(m.albums) {
-		i += m.conf.PageLength
-	}
-	m.start = i
 }
